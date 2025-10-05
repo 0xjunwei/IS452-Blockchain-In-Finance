@@ -64,23 +64,60 @@ contract Perpetuals {
         // Require allowance else will fail by revert
 
         // price feeds return 8 decimals while usdc is 6, we should factor that into calculation
-        require(_amount > 0, "Amount must be more than 0");
-        require(!positions[msg.sender].isOpen, "Position already open");
-
-        // Pull USDC from user
+        require(_amount > 0, "Amount > 0");
         IERC20(usdcToken).transferFrom(msg.sender, address(this), _amount);
 
-        uint256 price = getLatestPrice();
+        uint256 currentPrice = getLatestPrice();
+        Position storage pos = positions[msg.sender];
 
-        positions[msg.sender] = Position({
-            size: _amount,
-            entryPrice: price,
-            isOpen: true
-        });
+        if (!pos.isOpen) {
+            // first position
+            pos.size = _amount;
+            pos.entryPrice = currentPrice;
+            pos.isOpen = true;
+        } else {
+            // increase size -> recalc weighted avg entry price
+            uint256 oldSize = pos.size;
+            uint256 newSize = oldSize + _amount;
+            uint256 weightedEntry = (pos.entryPrice * oldSize + currentPrice * _amount) / newSize;
 
-        openInterest += _amount;
-        totalShortPosition += _amount;
+            pos.size = newSize;
+            pos.entryPrice = weightedEntry;
+        }
 
+    }
+    // partial close of position
+    function reduceShort(uint256 _reduceAmount) external {
+        Position storage pos = positions[msg.sender];
+        require(pos.isOpen, "No position");
+        require(_reduceAmount > 0 && _reduceAmount <= pos.size, "Invalid reduce amount");
+
+        uint256 currentPrice = getLatestPrice();
+
+        // Normalize to 18 decimals
+        uint256 entry18 = pos.entryPrice * 1e10;
+        uint256 current18 = currentPrice * 1e10;
+        uint256 reduce18 = _reduceAmount * 1e12;
+
+        int256 pnl18 = int256(reduce18) * (int256(entry18) - int256(current18)) / int256(entry18);
+        int256 pnl6 = pnl18 / 1e12;
+
+        uint256 payout;
+        if (pnl6 > 0) {
+            payout = _reduceAmount + uint256(pnl6);
+        } else {
+            uint256 loss = uint256(-pnl6);
+            payout = _reduceAmount > loss ? _reduceAmount - loss : 0;
+        }
+
+        pos.size -= _reduceAmount;
+
+        if (pos.size == 0) {
+            pos.isOpen = false;
+            pos.entryPrice = 0;
+        }
+
+        IERC20(usdcToken).transfer(msg.sender, payout);
     }
 
     // Close short
@@ -105,7 +142,7 @@ contract Perpetuals {
 
         // Convert back to 6 decimals (USDC)
         int256 pnl6 = pnl18 / 1e12;
-        
+
         uint256 payout;
         if (pnl6 > 0) {
             payout = size + uint256(pnl6);
