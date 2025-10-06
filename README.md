@@ -1,66 +1,13 @@
-## Foundry
+Deployment
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
-
-Foundry consists of:
-
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
-
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
+Arbitrum Sepolia
+FAKE USDC: 0xb77ff7864657a548e24242f198394fa7c5214ad9
+Simulated Perps: 0xecbdc282820f1fc720adb21ae648e61593412f68
+Simulated Lending: 0x47439425B447f27F2D1d4d855266B9A4a2aD0fc2
 
 ```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+forge script script/DeployUSDC.s.sol --rpc-url wss://arbitrum-sepolia-rpc.publicnode.com --broadcast --account defaultKey --sender 0x272B97E93b3AccA272fB9ac7B9043d1Ba6472FC4 --etherscan-api-key $ETHERSCAN_KEY --verify
+forge script script/DeployPerps.s.sol --tc DeployPerpetuals --rpc-url wss://arbitrum-sepolia-rpc.publicnode.com --broadcast --account defaultKey --sender 0x272B97E93b3AccA272fB9ac7B9043d1Ba6472FC4 --etherscan-api-key $ETHERSCAN_KEY --verify
+forge script script/DeployLending.s.sol --rpc-url wss://arbitrum-sepolia-rpc.publicnode.com --broadcast --account defaultKey --sender 0x272B97E93b3AccA272fB9
+ac7B9043d1Ba6472FC4 --etherscan-api-key $ETHERSCAN_KEY --verify
 ```
