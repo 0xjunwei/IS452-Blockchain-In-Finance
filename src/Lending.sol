@@ -40,18 +40,18 @@ contract Lending {
         totalDeposits += msg.value;
     }
 
-
     function withdraw(uint256 _amount) external {
         DepositInfo storage user = deposits[msg.sender];
         require(user.amount > 0, "No balance");
-        require(_amount > 0 && _amount <= user.amount, "Invalid amount");
 
-        // Calculate and update interest before withdrawal
         uint256 pendingInterest = _calculateInterest(msg.sender);
         if (pendingInterest > 0) {
             user.amount += pendingInterest;
             totalDeposits += pendingInterest;
         }
+
+        require(_amount > 0 && _amount <= user.amount, "Invalid amount");
+
 
         // Withdraw requested amount
         user.amount -= _amount;
@@ -91,6 +91,5 @@ contract Lending {
         require(sent, "Withdraw failed");
     }
 
-    receive() external payable {
-    }
+    receive() external payable {}
 }

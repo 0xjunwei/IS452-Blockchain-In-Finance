@@ -118,26 +118,32 @@ contract LendingTest is Test {
         assertEq(owner.balance, balanceBefore + withdrawAmount);
     }
 
-    function testFail_WithdrawMoreThanBalance() public {
-        vm.startPrank(user1);
+    // revert testing
+
+    function test_RevertIf_WithdrawMoreThanBalance() public {
+        vm.prank(user1);
         lending.deposit{value: 10 ether}();
+        vm.expectRevert(); 
         lending.withdraw(20 ether);
-        vm.stopPrank();
     }
 
-    function testFail_WithdrawWithoutDeposit() public {
+    function test_RevertIf_WithdrawWithoutDeposit() public {
+        
+        vm.expectRevert();
         vm.prank(user1);
         lending.withdraw(1 ether);
     }
 
-    function testFail_OwnerWithdrawNotOwner() public {
+    function test_RevertIf_OwnerWithdrawNotOwner() public {
+        vm.expectRevert();
         vm.prank(user1);
         lending.ownerWithdraw(1 ether);
     }
 
-    function testFail_DepositZero() public {
+    function test_RevertIf_DepositZero() public {
+        vm.expectRevert();
         vm.prank(user1);
         lending.deposit{value: 0}();
     }
+    receive() external payable {}
 }
-

@@ -21,18 +21,17 @@ interface AggregatorV3Interface {
 interface IERC20 {
     function transferFrom(address from, address to, uint256 value) external returns (bool);
     function transfer(address to, uint256 value) external returns (bool);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 
 contract Perpetuals {
 
-    // Current Funding rate
     uint256 public fundingRate;
-    // Open Interest
     uint256 public openInterest;
-    // Total short position
     uint256 public totalShortPosition;
-    // map users address to position opened
+
     struct Position {
         uint256 size;       // in USDC (6 decimals)
         uint256 entryPrice; // price * 1e8 (from Chainlink)
@@ -40,10 +39,8 @@ contract Perpetuals {
     }
     mapping(address => Position) public positions;
 
-    // Mock USDC contract address
     address public usdcToken;
     address public owner;
-    // Data feed, arb sepolia address
     AggregatorV3Interface public priceFeed;
 
     constructor(address _usdc, address _priceFeed) {
@@ -51,7 +48,7 @@ contract Perpetuals {
         priceFeed = AggregatorV3Interface(_priceFeed);
         owner = msg.sender;
     }
-    // Chainlink price feed pricing
+    
     function getLatestPrice() public view returns (uint256) {
         (, int256 price,,,) = priceFeed.latestRoundData();
         require(price > 0, "Invalid price");
@@ -59,11 +56,6 @@ contract Perpetuals {
     }
 
     function short(uint256 _amount) external {
-        // up OI, totalShortPos and map the position
-        // Pull USDC from contract's / user's wallet first
-        // Require allowance else will fail by revert
-
-        // price feeds return 8 decimals while usdc is 6, we should factor that into calculation
         require(_amount > 0, "Amount > 0");
         IERC20(usdcToken).transferFrom(msg.sender, address(this), _amount);
 
@@ -71,30 +63,29 @@ contract Perpetuals {
         Position storage pos = positions[msg.sender];
 
         if (!pos.isOpen) {
-            // first position
             pos.size = _amount;
             pos.entryPrice = currentPrice;
             pos.isOpen = true;
         } else {
-            // increase size -> recalc weighted avg entry price
             uint256 oldSize = pos.size;
             uint256 newSize = oldSize + _amount;
             uint256 weightedEntry = (pos.entryPrice * oldSize + currentPrice * _amount) / newSize;
-
             pos.size = newSize;
             pos.entryPrice = weightedEntry;
         }
-
+        
+        openInterest += _amount;
+        totalShortPosition += _amount;
     }
-    // partial close of position
+    
     function reduceShort(uint256 _reduceAmount) external {
         Position storage pos = positions[msg.sender];
-        require(pos.isOpen, "No position");
+        // --- FIX: Made error message consistent ---
+        require(pos.isOpen, "No open position");
         require(_reduceAmount > 0 && _reduceAmount <= pos.size, "Invalid reduce amount");
 
         uint256 currentPrice = getLatestPrice();
 
-        // Normalize to 18 decimals
         uint256 entry18 = pos.entryPrice * 1e10;
         uint256 current18 = currentPrice * 1e10;
         uint256 reduce18 = _reduceAmount * 1e12;
@@ -117,57 +108,47 @@ contract Perpetuals {
             pos.entryPrice = 0;
         }
 
+        openInterest -= _reduceAmount;
+        totalShortPosition -= _reduceAmount;
+
         IERC20(usdcToken).transfer(msg.sender, payout);
     }
 
-    // Close short
     function closeShort() external {
-        // close the position
-        // Calculate the interest first before sending capital + interest, since mock perpetuals contract
-       Position storage pos = positions[msg.sender];
+        Position storage pos = positions[msg.sender];
         require(pos.isOpen, "No open position");
 
+        uint256 sizeToClose = pos.size; // Store before it's modified
+        
         uint256 currentPrice = getLatestPrice();
-        uint256 entry = pos.entryPrice;
-        uint256 size = pos.size;
-
-        // Normalize decimals to 18 for calculation:
-        uint256 size18 = size * 1e12;
-        uint256 entry18 = entry * 1e10;
+        uint256 entry18 = pos.entryPrice * 1e10;
         uint256 current18 = currentPrice * 1e10;
+        uint256 size18 = sizeToClose * 1e12;
 
-        // PnL = size * (entry - current) / entry
-        // Point to note OI must not be above int256 or position size else overflow
         int256 pnl18 = int256(size18) * (int256(entry18) - int256(current18)) / int256(entry18);
-
-        // Convert back to 6 decimals (USDC)
         int256 pnl6 = pnl18 / 1e12;
 
         uint256 payout;
         if (pnl6 > 0) {
-            payout = size + uint256(pnl6);
+            payout = sizeToClose + uint256(pnl6);
         } else {
             uint256 loss = uint256(-pnl6);
-            payout = size > loss ? size - loss : 0;
+            payout = sizeToClose > loss ? sizeToClose - loss : 0;
         }
 
-        // Reset position
         pos.isOpen = false;
         pos.size = 0;
         pos.entryPrice = 0;
 
-        openInterest -= size;
-        totalShortPosition -= size;
+        openInterest -= sizeToClose;
+        totalShortPosition -= sizeToClose;
 
         IERC20(usdcToken).transfer(msg.sender, payout);
     }
 
-     function ownerWithdraw(uint256 _amount) external {
+    function ownerWithdraw(uint256 _amount) external {
         require(msg.sender == owner, "Not owner");
         IERC20(usdcToken).transfer(owner, _amount);
     }
-    // Future ref handle longs for funding rate flip
-    // Liquidate position function? not needed in this context
-
-    
 }
+

@@ -46,15 +46,15 @@ contract MockWETH {
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
-        require(balanceOf[msg.sender] >= amount);
+        require(balanceOf[msg.sender] >= amount, "MockWETH: transfer amount exceeds balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
     }
 
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        require(balanceOf[from] >= amount);
-        require(allowance[from][msg.sender] >= amount);
+        require(balanceOf[from] >= amount, "MockWETH: transfer amount exceeds balance");
+        require(allowance[from][msg.sender] >= amount, "MockWETH: insufficient allowance");
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         allowance[from][msg.sender] -= amount;
@@ -118,16 +118,17 @@ contract DexTest is Test {
         uint256 usdcAmount = 3000 * 1e6; // 3000 USDC
         uint256 expectedEth = (usdcAmount * 1e12) * 1e8 / INITIAL_ETH_PRICE; // ~1 ETH
         
+        uint256 ethBefore = user1.balance;
+        
         vm.startPrank(user1);
         usdc.approve(address(dex), usdcAmount);
-        
-        uint256 ethBefore = user1.balance;
         dex.swap(address(usdc), address(0), usdcAmount);
-        uint256 ethAfter = user1.balance;
-        
         vm.stopPrank();
         
-        assertEq(ethAfter - ethBefore, expectedEth);
+        uint256 ethAfter = user1.balance;
+        
+        // Note: ETH transfers change gas, so we check for approximate value
+        assertApproxEqAbs(ethAfter - ethBefore, expectedEth, 1e15); // Allow small diff for gas
     }
 
     function test_SwapWETHToUSDC() public {
@@ -137,66 +138,64 @@ contract DexTest is Test {
         vm.prank(user1);
         weth.deposit{value: wethAmount}();
         
-        // Transfer WETH to dex for liquidity
+        weth.deposit{value: 100 ether}();
         weth.transfer(address(dex), 100 ether);
         
         uint256 expectedUsdc = (wethAmount * INITIAL_ETH_PRICE) / 1e8 / 1e12;
         
+        uint256 usdcBefore = usdc.balanceOf(user1);
         vm.startPrank(user1);
         weth.approve(address(dex), wethAmount);
-        
-        uint256 usdcBefore = usdc.balanceOf(user1);
         dex.swap(address(weth), address(usdc), wethAmount);
-        uint256 usdcAfter = usdc.balanceOf(user1);
-        
         vm.stopPrank();
+        uint256 usdcAfter = usdc.balanceOf(user1);
         
         assertEq(usdcAfter - usdcBefore, expectedUsdc);
     }
 
     function test_SwapUSDCToWETH() public {
+
+        weth.deposit{value: 100 ether}();
         weth.transfer(address(dex), 100 ether); // Fund dex with WETH
         
         uint256 usdcAmount = 3000 * 1e6;
         uint256 expectedWeth = (usdcAmount * 1e12) * 1e8 / INITIAL_ETH_PRICE;
         
+        uint256 wethBefore = weth.balanceOf(user1);
         vm.startPrank(user1);
         usdc.approve(address(dex), usdcAmount);
-        
-        uint256 wethBefore = weth.balanceOf(user1);
         dex.swap(address(usdc), address(weth), usdcAmount);
-        uint256 wethAfter = weth.balanceOf(user1);
-        
         vm.stopPrank();
+        uint256 wethAfter = weth.balanceOf(user1);
         
         assertEq(wethAfter - wethBefore, expectedWeth);
     }
 
     function test_PriceUpdate() public {
-        // Update price to $4000
         priceFeed.updateAnswer(4000e8);
         assertEq(dex.getLatestPrice(), 4000e8);
         
-        // Swap should use new price
         uint256 ethAmount = 1 ether;
+        uint256 initialUserBalance = usdc.balanceOf(user1);
         
         vm.prank(user1);
         dex.swap{value: ethAmount}(address(0), address(usdc), ethAmount);
         
-        // Check user got approximately 4000 USDC
-        assertGt(usdc.balanceOf(user1), 100_000 * 1e6 + 3900 * 1e6);
+        uint256 expectedUsdc = 4000 * 1e6;
+        uint256 finalUserBalance = usdc.balanceOf(user1);
+        assertEq(finalUserBalance - initialUserBalance, expectedUsdc);
     }
 
     function test_DepositToken() public {
         uint256 amount = 1000 * 1e6;
+        uint256 dexBalanceBefore = usdc.balanceOf(address(dex));
         
         vm.startPrank(user1);
         usdc.approve(address(dex), amount);
         dex.depositToken(address(usdc), amount);
         vm.stopPrank();
         
-        // Dex should have received tokens
-        assertGt(usdc.balanceOf(address(dex)), 1_000_000 * 1e6);
+        assertEq(usdc.balanceOf(address(dex)), dexBalanceBefore + amount);
     }
 
     function test_DepositEth() public {
@@ -209,23 +208,28 @@ contract DexTest is Test {
         assertEq(address(dex).balance, balanceBefore + amount);
     }
 
-    function testFail_SwapSameToken() public {
+
+    function test_RevertIf_SwapSameToken() public {
+        vm.expectRevert(bytes("Cannot swap same token"));
         vm.prank(user1);
         dex.swap(address(usdc), address(usdc), 1000 * 1e6);
     }
 
-    function testFail_SwapETHWithoutValue() public {
+    function test_RevertIf_SwapETHWithoutValue() public {
+        vm.expectRevert(bytes("ETH amount mismatch"));
         vm.prank(user1);
         dex.swap(address(0), address(usdc), 1 ether);
     }
 
-    function testFail_SwapInsufficientLiquidity() public {
-        // Try to swap more USDC than dex has
-        uint256 largeAmount = 10_000_000 * 1e6;
+    function test_RevertIf_SwapInsufficientLiquidity() public {
+        uint256 largeAmount = 4_000_000 * 1e6; // Amount of USDC that would require > 1000 ETH
+        
+        usdc.transfer(user1, largeAmount); // Give user enough USDC
         
         vm.startPrank(user1);
         usdc.approve(address(dex), largeAmount);
-        usdc.transfer(user1, largeAmount); // give user enough
+        
+        vm.expectRevert(bytes("Insufficient ETH liquidity"));
         dex.swap(address(usdc), address(0), largeAmount);
         vm.stopPrank();
     }

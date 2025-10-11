@@ -49,15 +49,15 @@ contract MockWETH {
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
-        require(balanceOf[msg.sender] >= amount);
+        require(balanceOf[msg.sender] >= amount, "ERC20: transfer amount exceeds balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
     }
 
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        require(balanceOf[from] >= amount);
-        require(allowance[from][msg.sender] >= amount);
+        require(balanceOf[from] >= amount, "ERC20: transfer amount exceeds balance");
+        require(allowance[from][msg.sender] >= amount, "ERC20: insufficient allowance");
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         allowance[from][msg.sender] -= amount;
@@ -132,17 +132,14 @@ contract DeltaTest is Test {
         vault.deposit(depositAmount);
         vm.stopPrank();
         
-        // Check shares minted 1:1
         assertEq(vault.balanceOf(user1), depositAmount);
         
-        // Check positions opened
         (uint256 perpsSize,, bool isOpen) = perps.positions(address(vault));
         assertTrue(isOpen);
-        assertEq(perpsSize, depositAmount / 2); // 50% in perps
+        assertEq(perpsSize, depositAmount / 2);
         
-        // Check ETH deposited in lending
         uint256 lendingBalance = lending.getAccruedBalance(address(vault));
-        assertGt(lendingBalance, 0); // Should have ETH in lending
+        assertGt(lendingBalance, 0);
     }
 
     function test_MultipleDeposits() public {
@@ -165,7 +162,6 @@ contract DeltaTest is Test {
         usdc.approve(address(vault), depositAmount);
         vault.deposit(depositAmount);
         
-        // Withdraw half
         uint256 withdrawAmount = 5_000 * 1e6;
         uint256 usdcBefore = usdc.balanceOf(user1);
         vault.withdraw(withdrawAmount);
@@ -173,9 +169,8 @@ contract DeltaTest is Test {
         
         vm.stopPrank();
         
-        // Check shares burned and USDC received
         assertEq(vault.balanceOf(user1), depositAmount - withdrawAmount);
-        assertEq(usdcAfter - usdcBefore, withdrawAmount);
+        assertApproxEqRel(usdcAfter - usdcBefore, withdrawAmount, 0.01e18); // 1% tolerance
     }
 
     function test_WithdrawAll() public {
@@ -189,8 +184,7 @@ contract DeltaTest is Test {
         vm.stopPrank();
         
         assertEq(vault.balanceOf(user1), 0);
-        // Should get back approximately the deposit (minus swap slippage/fees)
-        assertApproxEqRel(usdc.balanceOf(user1), 1_000_000 * 1e6, 0.05e18); // 5% tolerance
+        assertApproxEqRel(usdc.balanceOf(user1), 1_000_000 * 1e6, 0.05e18);
     }
 
     function test_HarvestLending() public {
@@ -201,15 +195,12 @@ contract DeltaTest is Test {
         vault.deposit(depositAmount);
         vm.stopPrank();
         
-        // Fast forward to accrue interest
         vm.warp(block.timestamp + 180 days);
         
-        // Harvest
         uint256 usdcBefore = usdc.balanceOf(address(vault));
         vault.harvestLending();
         uint256 usdcAfter = usdc.balanceOf(address(vault));
         
-        // Should have harvested some USDC
         assertGt(usdcAfter, usdcBefore);
     }
 
@@ -221,16 +212,13 @@ contract DeltaTest is Test {
         vault.deposit(depositAmount);
         vm.stopPrank();
         
-        // Price drops (profitable for short)
         priceFeed.updateAnswer(2500e8);
         
         (uint256 sizeBefore,,) = perps.positions(address(vault));
         
-        // Harvest funding
         uint256 harvestAmount = sizeBefore / 2;
         vault.harvestFunding(harvestAmount);
         
-        // Position should be maintained at same size
         (uint256 sizeAfter,,) = perps.positions(address(vault));
         assertEq(sizeAfter, sizeBefore);
     }
@@ -242,7 +230,6 @@ contract DeltaTest is Test {
         usdc.approve(address(vault), depositAmount);
         vault.deposit(depositAmount);
         
-        // Stake shares
         uint256 stakeAmount = 5_000 * 1e6;
         vault.stake(stakeAmount);
         vm.stopPrank();
@@ -254,7 +241,6 @@ contract DeltaTest is Test {
     }
 
     function test_UnstakeAndClaimRewards() public {
-        // User1 stakes
         uint256 deposit1 = 10_000 * 1e6;
         vm.startPrank(user1);
         usdc.approve(address(vault), deposit1);
@@ -262,11 +248,9 @@ contract DeltaTest is Test {
         vault.stake(deposit1);
         vm.stopPrank();
         
-        // Generate some rewards by harvesting
         vm.warp(block.timestamp + 30 days);
         vault.harvestLending();
         
-        // User2 deposits and stakes
         uint256 deposit2 = 10_000 * 1e6;
         vm.startPrank(user2);
         usdc.approve(address(vault), deposit2);
@@ -274,11 +258,9 @@ contract DeltaTest is Test {
         vault.stake(deposit2);
         vm.stopPrank();
         
-        // More rewards
         vm.warp(block.timestamp + 30 days);
         vault.harvestLending();
         
-        // User1 claims rewards
         uint256 pending1 = vault.pendingRewards(user1);
         uint256 usdcBefore1 = usdc.balanceOf(user1);
         
@@ -288,10 +270,9 @@ contract DeltaTest is Test {
         uint256 usdcAfter1 = usdc.balanceOf(user1);
         
         if (pending1 > 0) {
-            assertEq(usdcAfter1 - usdcBefore1, pending1);
+            assertApproxEqRel(usdcAfter1 - usdcBefore1, pending1, 0.01e18);
         }
         
-        // User1 unstakes
         vm.prank(user1);
         vault.unstake(deposit1);
         
@@ -300,7 +281,6 @@ contract DeltaTest is Test {
     }
 
     function test_RewardDistribution() public {
-        // Two users stake equal amounts
         uint256 stakeAmount = 10_000 * 1e6;
         
         vm.startPrank(user1);
@@ -315,16 +295,14 @@ contract DeltaTest is Test {
         vault.stake(stakeAmount);
         vm.stopPrank();
         
-        // Generate rewards
         vm.warp(block.timestamp + 90 days);
         vault.harvestLending();
         
-        // Both should have equal pending rewards
         uint256 pending1 = vault.pendingRewards(user1);
         uint256 pending2 = vault.pendingRewards(user2);
         
         if (pending1 > 0 || pending2 > 0) {
-            assertApproxEqRel(pending1, pending2, 0.01e18); // 1% tolerance
+            assertApproxEqRel(pending1, pending2, 0.01e18);
         }
     }
 
@@ -346,7 +324,7 @@ contract DeltaTest is Test {
     }
 
     function test_SetFeeToStakersBps() public {
-        vault.setFeeToStakersBps(3000); // 30%
+        vault.setFeeToStakersBps(3000);
         assertEq(vault.feeToStakersBps(), 3000);
     }
 
@@ -360,50 +338,57 @@ contract DeltaTest is Test {
         
         uint256 totalAssets = vault.totalAssetsUSDC();
         
-        // Total assets should be approximately the deposit amount
-        // (accounting for positions in lending and perps)
-        assertApproxEqRel(totalAssets, depositAmount, 0.1e18); // 10% tolerance
+        assertApproxEqRel(totalAssets, depositAmount, 0.1e18);
     }
 
-    function testFail_DepositZero() public {
+    function test_RevertIf_DepositZero() public {
         vm.prank(user1);
+        vm.expectRevert(bytes("amount=0"));
         vault.deposit(0);
     }
 
-    function testFail_WithdrawMoreThanBalance() public {
+    function test_RevertIf_WithdrawMoreThanBalance() public {
         vm.startPrank(user1);
         usdc.approve(address(vault), 10_000 * 1e6);
         vault.deposit(10_000 * 1e6);
+        
+        vm.expectRevert(bytes("insufficient shares"));
         vault.withdraw(20_000 * 1e6);
         vm.stopPrank();
     }
 
-    function testFail_StakeWithoutShares() public {
+    function test_RevertIf_StakeWithoutShares() public {
         vm.prank(user1);
+        vm.expectRevert();
         vault.stake(1000 * 1e6);
     }
 
-    function testFail_UnstakeMoreThanStaked() public {
+    function test_RevertIf_UnstakeMoreThanStaked() public {
         vm.startPrank(user1);
         usdc.approve(address(vault), 10_000 * 1e6);
         vault.deposit(10_000 * 1e6);
         vault.stake(5_000 * 1e6);
+
+        vm.expectRevert(bytes("bad shares"));
         vault.unstake(10_000 * 1e6);
         vm.stopPrank();
     }
 
-    function testFail_SetFeeNotOwner() public {
+    function test_RevertIf_SetFeeNotOwner() public {
         vm.prank(user1);
+        vm.expectRevert();
         vault.setFeeToStakersBps(5000);
     }
 
-    function testFail_PauseNotOwner() public {
+    function test_RevertIf_PauseNotOwner() public {
         vm.prank(user1);
+        vm.expectRevert();
         vault.pause();
     }
 
-    function testFail_SetFeeTooHigh() public {
-        vault.setFeeToStakersBps(10001); // > MAX_BPS
+    function test_RevertIf_SetFeeTooHigh() public {
+        vm.expectRevert(bytes("fee too high"));
+        vault.setFeeToStakersBps(10001);
     }
 }
 

@@ -46,11 +46,11 @@ contract PerpetualsTest is Test {
         perps = new Perpetuals(address(usdc), address(priceFeed));
         
         // Fund users with USDC
-        usdc.transfer(user1, 100_000 * 1e6);
-        usdc.transfer(user2, 100_000 * 1e6);
+        usdc.transfer(user1, 1_000_000 * 1e6); // 1M USDC
+        usdc.transfer(user2, 1_000_000 * 1e6); // 1M USDC
         
         // Fund perps contract with USDC for payouts
-        usdc.transfer(address(perps), 1_000_000 * 1e6);
+        usdc.transfer(address(perps), 1_000_000 * 1e6); // 1M USDC
     }
 
     function test_GetLatestPrice() public view {
@@ -70,6 +70,7 @@ contract PerpetualsTest is Test {
         assertEq(size, shortSize);
         assertEq(entryPrice, INITIAL_PRICE);
         assertTrue(isOpen);
+        assertEq(perps.openInterest(), shortSize);
     }
 
     function test_IncreaseShortPosition() public {
@@ -102,8 +103,7 @@ contract PerpetualsTest is Test {
         usdc.approve(address(perps), shortSize);
         perps.short(shortSize);
         
-        // Price drops to $2500 (profitable for short)
-        priceFeed.updateAnswer(2500e8);
+        priceFeed.updateAnswer(2500e8); // Price drops (profit)
         
         uint256 balanceBefore = usdc.balanceOf(user1);
         perps.closeShort();
@@ -111,11 +111,12 @@ contract PerpetualsTest is Test {
         
         vm.stopPrank();
         
-        // PnL = size * (entry - current) / entry
-        // = 10000 * (3000 - 2500) / 3000 = 10000 * 500/3000 ≈ 1666.67
-        uint256 profit = balanceAfter - balanceBefore;
-        assertGt(profit, shortSize); // Should get back more than deposited
-        assertApproxEqRel(profit, shortSize + 1_666 * 1e6, 0.01e18); // 1% tolerance
+        // PnL = size * (entry - current) / entry = 10000 * (3000-2500)/3000 = 1666.66
+        uint256 expectedProfit = (shortSize * (INITIAL_PRICE - 2500e8)) / INITIAL_PRICE;
+        uint256 expectedPayout = shortSize + expectedProfit;
+
+        assertApproxEqAbs(balanceAfter - balanceBefore, expectedPayout, 1); // allow 1 wei rounding diff
+        assertEq(perps.openInterest(), 0);
     }
 
     function test_CloseShortLoss() public {
@@ -125,8 +126,7 @@ contract PerpetualsTest is Test {
         usdc.approve(address(perps), shortSize);
         perps.short(shortSize);
         
-        // Price rises to $3500 (loss for short)
-        priceFeed.updateAnswer(3500e8);
+        priceFeed.updateAnswer(3500e8); // Price rises (loss)
         
         uint256 balanceBefore = usdc.balanceOf(user1);
         perps.closeShort();
@@ -134,11 +134,12 @@ contract PerpetualsTest is Test {
         
         vm.stopPrank();
         
-        // Loss = size * (current - entry) / entry
-        // = 10000 * (3500 - 3000) / 3000 ≈ -1666.67
-        uint256 payout = balanceAfter - balanceBefore;
-        assertLt(payout, shortSize); // Should get back less than deposited
-        assertApproxEqRel(payout, shortSize - 1_666 * 1e6, 0.01e18);
+        // Loss = size * (current - entry) / entry = 10000 * (3500-3000)/3000 = 1666.66
+        uint256 expectedLoss = (shortSize * (3500e8 - INITIAL_PRICE)) / INITIAL_PRICE;
+        uint256 expectedPayout = shortSize - expectedLoss;
+
+        assertApproxEqAbs(balanceAfter - balanceBefore, expectedPayout, 1);
+        assertEq(perps.openInterest(), 0);
     }
 
     function test_ReduceShort() public {
@@ -149,8 +150,7 @@ contract PerpetualsTest is Test {
         usdc.approve(address(perps), shortSize);
         perps.short(shortSize);
         
-        // Price drops
-        priceFeed.updateAnswer(2500e8);
+        priceFeed.updateAnswer(2500e8); // Price drops
         
         uint256 balanceBefore = usdc.balanceOf(user1);
         perps.reduceShort(reduceAmount);
@@ -158,43 +158,44 @@ contract PerpetualsTest is Test {
         
         vm.stopPrank();
         
-        // Position should be reduced
         (uint256 size,,) = perps.positions(user1);
         assertEq(size, shortSize - reduceAmount);
+        assertEq(perps.openInterest(), shortSize - reduceAmount);
         
-        // Should have received payout with profit
         uint256 payout = balanceAfter - balanceBefore;
         assertGt(payout, reduceAmount);
     }
 
     function test_MultipleUsersShort() public {
-        uint256 shortSize = 10_000 * 1e6;
-        
-        // User1 shorts
+        uint256 user1ShortSize = 10_000 * 1e6;
+        uint256 user2ShortSize = 5_000 * 1e6;
+
+        // User 1 shorts
         vm.startPrank(user1);
-        usdc.approve(address(perps), shortSize);
-        perps.short(shortSize);
+        usdc.approve(address(perps), user1ShortSize);
+        perps.short(user1ShortSize);
         vm.stopPrank();
-        
-        // User2 shorts
+
+        // User 2 shorts
         vm.startPrank(user2);
-        usdc.approve(address(perps), shortSize);
-        perps.short(shortSize);
+        usdc.approve(address(perps), user2ShortSize);
+        perps.short(user2ShortSize);
         vm.stopPrank();
-        
+
         (uint256 size1,,) = perps.positions(user1);
         (uint256 size2,,) = perps.positions(user2);
-        
-        assertEq(size1, shortSize);
-        assertEq(size2, shortSize);
+
+        assertEq(size1, user1ShortSize);
+        assertEq(size2, user2ShortSize);
+        assertEq(perps.openInterest(), user1ShortSize + user2ShortSize);
     }
 
     function test_OwnerWithdraw() public {
         uint256 withdrawAmount = 100_000 * 1e6;
         uint256 balanceBefore = usdc.balanceOf(owner);
-        
+
         perps.ownerWithdraw(withdrawAmount);
-        
+
         assertEq(usdc.balanceOf(owner), balanceBefore + withdrawAmount);
     }
 
@@ -214,38 +215,47 @@ contract PerpetualsTest is Test {
         
         vm.stopPrank();
         
-        // Should make ~50% profit
-        uint256 profit = balanceAfter - balanceBefore - shortSize;
-        assertApproxEqRel(profit, 50_000 * 1e6, 0.01e18);
+        // Expected Payout = 100k (principal) + 50k (profit) = 150k
+        uint256 expectedProfit = (shortSize * (INITIAL_PRICE - 1500e8)) / INITIAL_PRICE;
+        uint256 expectedPayout = shortSize + expectedProfit;
+        assertApproxEqAbs(balanceAfter - balanceBefore, expectedPayout, 1);
     }
 
-    function testFail_ShortZeroAmount() public {
+    function test_RevertIf_ShortZeroAmount() public {
         vm.prank(user1);
+        vm.expectRevert(bytes("Amount > 0"));
         perps.short(0);
     }
 
-    function testFail_CloseShortNoPosition() public {
+    function test_RevertIf_CloseShortNoPosition() public {
         vm.prank(user1);
+        vm.expectRevert(bytes("No open position"));
         perps.closeShort();
     }
 
-    function testFail_ReduceShortTooMuch() public {
+    function test_RevertIf_ReduceShortTooMuch() public {
         uint256 shortSize = 10_000 * 1e6;
         
         vm.startPrank(user1);
         usdc.approve(address(perps), shortSize);
         perps.short(shortSize);
+        
+        vm.expectRevert(bytes("Invalid reduce amount"));
         perps.reduceShort(20_000 * 1e6); // More than position size
         vm.stopPrank();
     }
 
-    function testFail_OwnerWithdrawNotOwner() public {
+    function test_RevertIf_OwnerWithdrawNotOwner() public {
         vm.prank(user1);
+        vm.expectRevert(bytes("Not owner"));
         perps.ownerWithdraw(1000 * 1e6);
     }
 
-    function testFail_ShortWithoutApproval() public {
+    function test_RevertIf_ShortWithoutApproval() public {
         vm.prank(user1);
+
+        vm.expectRevert(); 
         perps.short(10_000 * 1e6);
     }
 }
+
