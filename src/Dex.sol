@@ -99,4 +99,6 @@ contract Dex {
             IERC20(token).transfer(msg.sender, amount);
         }
     }
+
+    receive() external payable {}
 }
