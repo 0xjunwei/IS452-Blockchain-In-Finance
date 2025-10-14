@@ -223,5 +223,5 @@ All contracts use:
 - Chainlink feeds return 8 decimals
 - Delta vault shares are 1:1 with USDC (6 decimals)
 - Lending APR is fixed at 2% (200 bps)
-- Default staker fee is 20% (2000 bps) of harvested yield
+- Default staker fee is 80% (8000 bps) of harvested yield
 
