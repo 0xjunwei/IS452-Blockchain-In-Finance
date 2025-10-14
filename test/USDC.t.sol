@@ -79,13 +79,15 @@ contract USDCTest is Test {
         assertEq(usdc.allowance(alice, user1), amount);
     }
 
-    function testFail_TransferInsufficientBalance() public {
+    function test_RevertIf_TransferInsufficientBalance() public {
         vm.prank(user1);
+        vm.expectRevert();
         usdc.transfer(user2, 1000 * 1e6);
     }
 
-    function testFail_TransferFromInsufficientAllowance() public {
+    function test_RevertIf_TransferFromInsufficientAllowance() public {
         vm.prank(user1);
+        vm.expectRevert();
         usdc.transferFrom(owner, user2, 1000 * 1e6);
     }
 }

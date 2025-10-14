@@ -134,7 +134,7 @@ contract DeltaTest is Test {
         
         assertEq(vault.balanceOf(user1), depositAmount);
         
-        (uint256 perpsSize,, bool isOpen) = perps.positions(address(vault));
+        (uint256 perpsSize,, bool isOpen,) = perps.positions(address(vault));
         assertTrue(isOpen);
         assertEq(perpsSize, depositAmount / 2);
         
@@ -170,7 +170,8 @@ contract DeltaTest is Test {
         vm.stopPrank();
         
         assertEq(vault.balanceOf(user1), depositAmount - withdrawAmount);
-        assertApproxEqRel(usdcAfter - usdcBefore, withdrawAmount, 0.01e18); // 1% tolerance
+        // Should get back proportional value based on total vault value
+        assertApproxEqRel(usdcAfter - usdcBefore, withdrawAmount, 0.02e18); // 2% tolerance for slippage
     }
 
     function test_WithdrawAll() public {
@@ -212,15 +213,21 @@ contract DeltaTest is Test {
         vault.deposit(depositAmount);
         vm.stopPrank();
         
-        priceFeed.updateAnswer(2500e8);
+        // Wait 30 days for funding to accrue
+        vm.warp(block.timestamp + 30 days);
         
-        (uint256 sizeBefore,,) = perps.positions(address(vault));
+        (uint256 sizeBefore,,,) = perps.positions(address(vault));
         
-        uint256 harvestAmount = sizeBefore / 2;
-        vault.harvestFunding(harvestAmount);
+        // Check pending funding
+        int256 pendingFunding = perps.getPendingFunding(address(vault));
+        assertGt(pendingFunding, 0, "Should have positive funding");
         
-        (uint256 sizeAfter,,) = perps.positions(address(vault));
-        assertEq(sizeAfter, sizeBefore);
+        // Harvest funding
+        vault.harvestFunding();
+        
+        // Position size should remain the same (no close/reopen)
+        (uint256 sizeAfter,,,) = perps.positions(address(vault));
+        assertEq(sizeAfter, sizeBefore, "Position size should not change");
     }
 
     function test_Stake() public {
@@ -389,6 +396,89 @@ contract DeltaTest is Test {
     function test_RevertIf_SetFeeTooHigh() public {
         vm.expectRevert(bytes("fee too high"));
         vault.setFeeToStakersBps(10001);
+    }
+
+    function test_HarvestFundingDoesNotChangePosition() public {
+        uint256 depositAmount = 100_000 * 1e6;
+        
+        vm.startPrank(user1);
+        usdc.approve(address(vault), depositAmount);
+        vault.deposit(depositAmount);
+        vm.stopPrank();
+        
+        // Verify initial position
+        (uint256 initialShortSize,,,) = perps.positions(address(vault));
+        uint256 initialVaultBalance = usdc.balanceOf(address(vault));
+        
+        // Wait 90 days for significant funding to accrue
+        vm.warp(block.timestamp + 90 days);
+        
+        // Harvest funding (no position change, just collect funding payment)
+        vault.harvestFunding();
+        
+        // Position should remain unchanged
+        (uint256 finalShortSize,,,) = perps.positions(address(vault));
+        assertEq(finalShortSize, initialShortSize, "Position size should not change");
+        
+        // Vault should have more USDC (from funding payment)
+        uint256 finalVaultBalance = usdc.balanceOf(address(vault));
+        assertGt(finalVaultBalance, initialVaultBalance, "Vault should receive funding");
+    }
+
+    function test_WithdrawAfterPriceChange() public {
+        uint256 depositAmount = 100_000 * 1e6;
+        
+        vm.startPrank(user1);
+        usdc.approve(address(vault), depositAmount);
+        vault.deposit(depositAmount);
+        vm.stopPrank();
+        
+        // Price drops from 3000 to 2500 (16.67% drop)
+        priceFeed.updateAnswer(2500e8);
+        
+        // Withdraw everything
+        vm.startPrank(user1);
+        uint256 usdcBefore = usdc.balanceOf(user1);
+        vault.withdraw(depositAmount);
+        uint256 usdcAfter = usdc.balanceOf(user1);
+        vm.stopPrank();
+        
+        uint256 received = usdcAfter - usdcBefore;
+        
+        // Due to delta neutral strategy, user should get back close to deposit amount
+        // Allow 2% tolerance for slippage and minor imbalances
+        assertApproxEqRel(received, depositAmount, 0.02e18);
+        
+        // Verify user received at least 98% of their deposit
+        assertGe(received, (depositAmount * 98) / 100);
+    }
+
+    function test_WithdrawAfterPriceIncrease() public {
+        uint256 depositAmount = 100_000 * 1e6;
+        
+        vm.startPrank(user1);
+        usdc.approve(address(vault), depositAmount);
+        vault.deposit(depositAmount);
+        vm.stopPrank();
+        
+        // Price increases from 3000 to 3600 (20% increase)
+        priceFeed.updateAnswer(3600e8);
+        
+        // Withdraw everything
+        vm.startPrank(user1);
+        uint256 usdcBefore = usdc.balanceOf(user1);
+        vault.withdraw(depositAmount);
+        uint256 usdcAfter = usdc.balanceOf(user1);
+        vm.stopPrank();
+        
+        uint256 received = usdcAfter - usdcBefore;
+        
+        // Due to delta neutral strategy, user should get back close to deposit amount
+        // Allow 2% tolerance for slippage and minor imbalances
+        assertApproxEqRel(received, depositAmount, 0.02e18);
+        
+        // Verify user received at least 98% of their deposit
+        assertGe(received, (depositAmount * 98) / 100);
     }
 }
 

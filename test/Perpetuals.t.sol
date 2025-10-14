@@ -66,7 +66,7 @@ contract PerpetualsTest is Test {
         perps.short(shortSize);
         vm.stopPrank();
         
-        (uint256 size, uint256 entryPrice, bool isOpen) = perps.positions(user1);
+        (uint256 size, uint256 entryPrice, bool isOpen,) = perps.positions(user1);
         assertEq(size, shortSize);
         assertEq(entryPrice, INITIAL_PRICE);
         assertTrue(isOpen);
@@ -88,7 +88,7 @@ contract PerpetualsTest is Test {
         perps.short(secondShort);
         vm.stopPrank();
         
-        (uint256 size, uint256 entryPrice,) = perps.positions(user1);
+        (uint256 size, uint256 entryPrice,,) = perps.positions(user1);
         assertEq(size, firstShort + secondShort);
         
         // Entry price should be weighted average: (3000*5000 + 3500*5000) / 10000 = 3250
@@ -158,7 +158,7 @@ contract PerpetualsTest is Test {
         
         vm.stopPrank();
         
-        (uint256 size,,) = perps.positions(user1);
+        (uint256 size,,,) = perps.positions(user1);
         assertEq(size, shortSize - reduceAmount);
         assertEq(perps.openInterest(), shortSize - reduceAmount);
         
@@ -182,8 +182,8 @@ contract PerpetualsTest is Test {
         perps.short(user2ShortSize);
         vm.stopPrank();
 
-        (uint256 size1,,) = perps.positions(user1);
-        (uint256 size2,,) = perps.positions(user2);
+        (uint256 size1,,,) = perps.positions(user1);
+        (uint256 size2,,,) = perps.positions(user2);
 
         assertEq(size1, user1ShortSize);
         assertEq(size2, user2ShortSize);

@@ -20,7 +20,9 @@ interface IPerpetuals {
     function short(uint256 _amount) external;
     function reduceShort(uint256 _reduceAmount) external;
     function getLatestPrice() external view returns (uint256);
-    function positions(address user) external view returns (uint256 size, uint256 entryPrice, bool isOpen);
+    function positions(address user) external view returns (uint256 size, uint256 entryPrice, bool isOpen, int256 fundingIndex);
+    function claimFunding() external returns (int256);
+    function getPendingFunding(address user) external view returns (int256);
 }
 
 interface IDex {
@@ -45,15 +47,19 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
     // Configuration
     uint256 public feeToStakersBps;
     uint256 public constant MAX_BPS = 10000;
+    
+    // Protocol fees (owner's 20% share)
+    uint256 public accumulatedProtocolFees;
 
     // Events
     event Deposit(address indexed user, uint256 usdcIn, uint256 sharesMinted);
     event Withdraw(address indexed user, uint256 sharesBurned, uint256 usdcOut);
     event HarvestLending(uint256 ethHarvested, uint256 usdcHarvested, uint256 toStakers, uint256 toVault);
-    event HarvestFunding(uint256 reduceAmountUSDC, uint256 usdcRealized, uint256 toStakers, uint256 toVault);
+    event HarvestFunding(uint256 fundingClaimed, uint256 toStakers, uint256 toVault);
     event Stake(address indexed user, uint256 shares);
     event Unstake(address indexed user, uint256 shares);
     event ClaimRewards(address indexed user, uint256 usdcAmount);
+    event OwnerWithdraw(address indexed owner, uint256 amount);
 
     constructor(
         address _usdc,
@@ -78,6 +84,24 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
     function setFeeToStakersBps(uint256 bps) external onlyOwner { require(bps <= MAX_BPS, "fee too high"); feeToStakersBps = bps; }
+    
+    function ownerWithdraw(uint256 amount) external onlyOwner nonReentrant {
+        require(amount > 0, "amount=0");
+        require(amount <= accumulatedProtocolFees, "exceeds protocol fees");
+        require(usdc.balanceOf(address(this)) >= amount, "insufficient balance");
+        
+        accumulatedProtocolFees -= amount;
+        require(usdc.transfer(msg.sender, amount), "transfer failed");
+        emit OwnerWithdraw(msg.sender, amount);
+    }
+    
+    function getAvailableProtocolFees() external view returns (uint256) {
+        return accumulatedProtocolFees;
+    }
+    
+    function getTotalUSDCBalance() external view returns (uint256) {
+        return usdc.balanceOf(address(this));
+    }
     
     function deposit(uint256 usdcAmount) external nonReentrant whenNotPaused {
         require(usdcAmount > 0, "amount=0");
@@ -108,30 +132,40 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
         require(shares > 0, "amount=0");
         require(balanceOf(msg.sender) >= shares, "insufficient shares");
 
+        // Calculate user's proportional share of vault value BEFORE burning
+        uint256 totalShares = totalSupply();
+        uint256 totalValue = totalAssetsUSDC();
+        uint256 userValue = (totalValue * shares) / totalShares;
+        
+        // Calculate how much to withdraw from each position proportionally
+        uint256 shareFraction = (shares * 1e18) / totalShares; // User's fraction scaled by 1e18
+
         _burn(msg.sender, shares);
 
-        uint256 half = shares / 2;
-        uint256 otherHalf = shares - half;
-
-        (uint256 size,, bool isOpen) = perps.positions(address(this));
+        // Unwind short position proportionally
+        (uint256 size,, bool isOpen,) = perps.positions(address(this));
         if (isOpen && size > 0) {
-            uint256 reduceAmt = half > size ? size : half;
+            uint256 reduceAmt = (size * shareFraction) / 1e18;
             if (reduceAmt > 0) {
                 perps.reduceShort(reduceAmt);
             }
         }
 
-        uint256 price = dex.getLatestPrice();
-        uint8 feedDecimals = 8;
-        uint256 ethNeeded = (otherHalf * 1e12) * (10 ** feedDecimals) / price;
+        // Withdraw ETH proportionally and convert to USDC
         uint256 ethAccrued = lending.getAccruedBalance(address(this));
-        if (ethNeeded > ethAccrued) ethNeeded = ethAccrued;
-        if (ethNeeded > 0) {
-            lending.withdraw(ethNeeded);
-            dex.swap{value: ethNeeded}(address(0), address(usdc), ethNeeded);
+        if (ethAccrued > 0) {
+            uint256 ethToWithdraw = (ethAccrued * shareFraction) / 1e18;
+            if (ethToWithdraw > 0) {
+                lending.withdraw(ethToWithdraw);
+                dex.swap{value: ethToWithdraw}(address(0), address(usdc), ethToWithdraw);
+            }
         }
 
-        uint256 usdcToUser = usdc.balanceOf(address(this)) >= shares ? shares : usdc.balanceOf(address(this));
+        // Transfer USDC to user
+        // Use minimum of userValue or actual balance to prevent reverts
+        uint256 usdcBalance = usdc.balanceOf(address(this));
+        uint256 usdcToUser = userValue > usdcBalance ? usdcBalance : userValue;
+        
         require(usdc.transfer(msg.sender, usdcToUser), "USDC xfer failed");
         emit Withdraw(msg.sender, shares, usdcToUser);
     }
@@ -154,30 +188,34 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
         if (toStakers > 0) {
             _distributeToStakers(toStakers);
         }
+        // Accumulate protocol fees for owner
+        accumulatedProtocolFees += toVault;
         emit HarvestLending(interestEth, harvestedUSDC, toStakers, toVault);
     }
 
-    function harvestFunding(uint256 reduceAmountUSDC) external nonReentrant whenNotPaused {
-        (uint256 size,, bool isOpen) = perps.positions(address(this));
+    function harvestFunding() external nonReentrant whenNotPaused {
+        (uint256 size,,bool isOpen,) = perps.positions(address(this));
         require(isOpen && size > 0, "no short");
-        if (reduceAmountUSDC > size) reduceAmountUSDC = size;
-
+        
+        // Check if there's pending funding to claim
+        int256 pendingFunding = perps.getPendingFunding(address(this));
+        require(pendingFunding > 0, "no funding to claim");
+        
+        // Claim funding from perpetuals contract
         uint256 usdcBefore = usdc.balanceOf(address(this));
-        perps.reduceShort(reduceAmountUSDC);
-        uint256 realized = usdc.balanceOf(address(this)) - usdcBefore;
-
-        if (reduceAmountUSDC > 0) {
-            _approveIfNeeded(usdc, address(perps), reduceAmountUSDC);
-            perps.short(reduceAmountUSDC);
-        }
-
-        if (realized > 0) {
-            uint256 toStakers = (realized * feeToStakersBps) / MAX_BPS;
-            uint256 toVault = realized - toStakers;
+        perps.claimFunding();
+        uint256 fundingReceived = usdc.balanceOf(address(this)) - usdcBefore;
+        
+        // Distribute funding to stakers and vault
+        if (fundingReceived > 0) {
+            uint256 toStakers = (fundingReceived * feeToStakersBps) / MAX_BPS;
+            uint256 toVault = fundingReceived - toStakers;
             if (toStakers > 0) {
                 _distributeToStakers(toStakers);
             }
-            emit HarvestFunding(reduceAmountUSDC, realized, toStakers, toVault);
+            // Accumulate protocol fees for owner
+            accumulatedProtocolFees += toVault;
+            emit HarvestFunding(fundingReceived, toStakers, toVault);
         }
     }
 
@@ -217,33 +255,26 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
     }
 
     function totalAssetsUSDC() public view returns (uint256) {
-        uint256 total;
-        total += usdc.balanceOf(address(this));
+        uint256 total = usdc.balanceOf(address(this));
 
-        uint256 ethHeld = address(this).balance;
-        uint256 ethLending = lending.getAccruedBalance(address(this));
-        uint256 ethTotal = ethHeld + ethLending;
+        // Add ETH value (from lending + held)
+        uint256 ethTotal = address(this).balance + lending.getAccruedBalance(address(this));
         if (ethTotal > 0) {
-            uint256 price = dex.getLatestPrice();
-            uint8 feedDecimals = 8;
-            uint256 usdcFromEth = (ethTotal * price) / (10 ** feedDecimals);
-            usdcFromEth = usdcFromEth / 1e12;
-            total += usdcFromEth;
+            total += (ethTotal * dex.getLatestPrice()) / 1e8 / 1e12; // price is 8 decimals, convert to 6
         }
 
-        (uint256 size, uint256 entryPrice, bool isOpen) = perps.positions(address(this));
+        // Add short position value (size + PnL + funding)
+        (uint256 size, uint256 entryPrice, bool isOpen,) = perps.positions(address(this));
         if (isOpen && size > 0) {
-            uint256 current = perps.getLatestPrice();
-            uint256 entry18 = entryPrice * 1e10;
-            uint256 current18 = current * 1e10;
-            uint256 size18 = size * 1e12;
-            int256 pnl18 = int256(size18) * (int256(entry18) - int256(current18)) / int256(entry18);
-            int256 pnl6 = pnl18 / 1e12;
-            if (pnl6 >= 0) {
-                total += size + uint256(pnl6);
+            int256 pnl = int256(size * 1e12) * (int256(entryPrice * 1e10) - int256(perps.getLatestPrice() * 1e10)) / int256(entryPrice * 1e10) / 1e12;
+            int256 positionValue = int256(size) + pnl + perps.getPendingFunding(address(this));
+            
+            if (positionValue >= 0) {
+                total += uint256(positionValue);
+            } else if (total > uint256(-positionValue)) {
+                total -= uint256(-positionValue);
             } else {
-                uint256 loss = uint256(-pnl6);
-                total += size > loss ? size - loss : 0;
+                total = 0;
             }
         }
         return total;
