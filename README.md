@@ -38,4 +38,9 @@ cast send 0x27a7caba2587ee6b8c115fb88b0f241c54095eb9 \
     1000000000 \
     --rpc-url arbitrum_sepolia \
     --private-key $PRIVATE_KEY
+
+cast send 0x27a7caba2587ee6b8c115fb88b0f241c54095eb9 \
+    "claimRewards()" \
+    --rpc-url arbitrum_sepolia \
+    --private-key $PRIVATE_KEY
 ```
