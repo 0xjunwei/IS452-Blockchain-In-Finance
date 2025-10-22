@@ -9,6 +9,23 @@ Perpetuals:  0x4919c7458ecac4187e57efafb407f1538b73e75f
 Delta Vault: 0x6f4338a8bb8bdaddef7d5cb606fc7510a5452863
 ```
 
+Adjust / or \ according to windows or macos
+
+
+Deploy code:
+```
+forge script .\script\DeployAll.s.sol:DeployAll --rpc-url $RPC_URL --verify --broadcast -vvvv
+
+If verification fail
+forge flatten .\src\USDC.sol > USDC_flattened.sol
+forge flatten .\src\Lending.sol > Lending_flattened.sol
+forge flatten .\src\Dex.sol > Dex_flattened.sol
+forge flatten .\src\Perpetuals.sol > Perpetuals_flattened.sol
+forge flatten .\src\Delta.sol > DeltaVault_flattened.sol
+```
+
+
+
 Test Transaction
 https://sepolia.arbiscan.io/tx/0xbaeef05771d20df53c9582f67568c58f57c74b5c59759a80a6a5c14d5ad76043
 ```shell
