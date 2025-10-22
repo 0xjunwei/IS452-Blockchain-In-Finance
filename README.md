@@ -2,11 +2,11 @@ Deployment
 
 Arbitrum Sepolia
 ```
-USDC:        0x7A8507e60eAc46C592cb505A35DEA374dC06BFA8
-Lending:     0xC62F73A09047FEd6F2fCADCDE0FA89c1F6b53AF7
-Dex:         0x706882dE9AdF2ae2F03001690675BAb1a04e2035
-Perpetuals:  0x51f4f05329e629132e03b81F532690c8f0859eFF
-Delta Vault: 0xFD8601FAaA0edc762F012a86e80A7901a9Aa66b2
+USDC:        0x879ab869f254d5f64086bee62aa4f8adbe380ac0
+Lending:     0x8babdda69f401795c79dcdccfa200d4c9c7d9777
+Dex:         0x1fa269df4ca7b9aee8742d89dafbc977fa66622d
+Perpetuals:  0x4919c7458ecac4187e57efafb407f1538b73e75f
+Delta Vault: 0x6f4338a8bb8bdaddef7d5cb606fc7510a5452863
 ```
 
 Test Transaction
