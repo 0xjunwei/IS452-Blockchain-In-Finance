@@ -131,7 +131,8 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
     function withdraw(uint256 shares) external nonReentrant whenNotPaused {
         require(shares > 0, "amount=0");
         require(balanceOf(msg.sender) >= shares, "insufficient shares");
-
+        _harvestLending();
+        _harvestFunding();
         // Calculate user's proportional share of vault value BEFORE burning
         uint256 totalShares = totalSupply();
         uint256 totalValue = totalAssetsUSDC();
@@ -170,54 +171,17 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
         emit Withdraw(msg.sender, shares, usdcToUser);
     }
 
+    
+
     function harvestLending() external nonReentrant whenNotPaused {
-        (uint256 principal,) = lending.deposits(address(this));
-        uint256 accrued = lending.getAccruedBalance(address(this));
-        if (accrued <= principal) return;
-        uint256 interestEth = accrued - principal;
-
-        lending.withdraw(interestEth);
-
-        uint256 usdcBefore = usdc.balanceOf(address(this));
-        dex.swap{value: interestEth}(address(0), address(usdc), interestEth);
-        uint256 harvestedUSDC = usdc.balanceOf(address(this)) - usdcBefore;
-        if (harvestedUSDC == 0) return;
-
-        uint256 toStakers = (harvestedUSDC * feeToStakersBps) / MAX_BPS;
-        uint256 toVault = harvestedUSDC - toStakers;
-        if (toStakers > 0) {
-            _distributeToStakers(toStakers);
-        }
-        // Accumulate protocol fees for owner
-        accumulatedProtocolFees += toVault;
-        emit HarvestLending(interestEth, harvestedUSDC, toStakers, toVault);
+        _harvestLending();
     }
 
     function harvestFunding() external nonReentrant whenNotPaused {
-        (uint256 size,,bool isOpen,) = perps.positions(address(this));
-        require(isOpen && size > 0, "no short");
-        
-        // Check if there's pending funding to claim
-        int256 pendingFunding = perps.getPendingFunding(address(this));
-        require(pendingFunding > 0, "no funding to claim");
-        
-        // Claim funding from perpetuals contract
-        uint256 usdcBefore = usdc.balanceOf(address(this));
-        perps.claimFunding();
-        uint256 fundingReceived = usdc.balanceOf(address(this)) - usdcBefore;
-        
-        // Distribute funding to stakers and vault
-        if (fundingReceived > 0) {
-            uint256 toStakers = (fundingReceived * feeToStakersBps) / MAX_BPS;
-            uint256 toVault = fundingReceived - toStakers;
-            if (toStakers > 0) {
-                _distributeToStakers(toStakers);
-            }
-            // Accumulate protocol fees for owner
-            accumulatedProtocolFees += toVault;
-            emit HarvestFunding(fundingReceived, toStakers, toVault);
-        }
+        _harvestFunding();
     }
+
+    
 
     function stake(uint256 shares) external nonReentrant whenNotPaused {
         require(shares > 0, "shares must be more than 0");
@@ -231,6 +195,8 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
 
     function unstake(uint256 shares) external nonReentrant whenNotPaused {
         require(shares > 0 && stakedShares[msg.sender] >= shares, "bad shares");
+        _harvestLending();
+        _harvestFunding();
         _updateUserRewards(msg.sender);
         totalStakedShares -= shares;
         stakedShares[msg.sender] -= shares;
@@ -297,6 +263,55 @@ contract DeltaVault is ERC20, ERC20Permit, Ownable, Pausable, ReentrancyGuard {
             rewardDebt[user] = (stakedShares[user] * accRewardsPerStakedShare) / 1e18;
             require(usdc.transfer(user, pending), "reward xfer failed");
             emit ClaimRewards(user, pending);
+        }
+    }
+
+    function _harvestLending() internal {
+        (uint256 principal,) = lending.deposits(address(this));
+        uint256 accrued = lending.getAccruedBalance(address(this));
+        if (accrued <= principal) return;
+        uint256 interestEth = accrued - principal;
+
+        lending.withdraw(interestEth);
+
+        uint256 usdcBefore = usdc.balanceOf(address(this));
+        dex.swap{value: interestEth}(address(0), address(usdc), interestEth);
+        uint256 harvestedUSDC = usdc.balanceOf(address(this)) - usdcBefore;
+        if (harvestedUSDC == 0) return;
+
+        uint256 toStakers = (harvestedUSDC * feeToStakersBps) / MAX_BPS;
+        uint256 toVault = harvestedUSDC - toStakers;
+        if (toStakers > 0) {
+            _distributeToStakers(toStakers);
+        }
+        // Accumulate protocol fees for owner
+        accumulatedProtocolFees += toVault;
+        emit HarvestLending(interestEth, harvestedUSDC, toStakers, toVault);
+    }
+
+    function _harvestFunding() internal {
+        (uint256 size,,bool isOpen,) = perps.positions(address(this));
+        if (!isOpen || size == 0) return;
+        
+        // Check if there's pending funding to claim
+        int256 pendingFunding = perps.getPendingFunding(address(this));
+        if (pendingFunding <= 0) return;
+        
+        // Claim funding from perpetuals contract
+        uint256 usdcBefore = usdc.balanceOf(address(this));
+        perps.claimFunding();
+        uint256 fundingReceived = usdc.balanceOf(address(this)) - usdcBefore;
+        
+        // Distribute funding to stakers and vault
+        if (fundingReceived > 0) {
+            uint256 toStakers = (fundingReceived * feeToStakersBps) / MAX_BPS;
+            uint256 toVault = fundingReceived - toStakers;
+            if (toStakers > 0) {
+                _distributeToStakers(toStakers);
+            }
+            // Accumulate protocol fees for owner
+            accumulatedProtocolFees += toVault;
+            emit HarvestFunding(fundingReceived, toStakers, toVault);
         }
     }
 
