@@ -23,11 +23,7 @@ forge flatten .\src\Dex.sol > Dex_flattened.sol
 forge flatten .\src\Perpetuals.sol > Perpetuals_flattened.sol
 forge flatten .\src\Delta.sol > DeltaVault_flattened.sol
 ```
-
-
-
-Test Transaction
-https://sepolia.arbiscan.io/tx/0xbaeef05771d20df53c9582f67568c58f57c74b5c59759a80a6a5c14d5ad76043
+[Test Transaction](https://sepolia.arbiscan.io/tx/0x8a3844d565416fd730a1c837b430639593bcf4f2d93b5f847141e3c62ba41b05)
 ```shell
 
 # For testing approve and send 1000 usdc to delta contract
