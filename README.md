@@ -2,11 +2,11 @@ Deployment
 
 Arbitrum Sepolia
 ```
-USDC:        0x879ab869f254d5f64086bee62aa4f8adbe380ac0
-Lending:     0x8babdda69f401795c79dcdccfa200d4c9c7d9777
-Dex:         0x1fa269df4ca7b9aee8742d89dafbc977fa66622d
-Perpetuals:  0x4919c7458ecac4187e57efafb407f1538b73e75f
-Delta Vault: 0x6f4338a8bb8bdaddef7d5cb606fc7510a5452863
+USDC:        0x61d2e62b99905738f301b37b37e5f2bd54779c72
+Lending:     0x083634a3548436c128853d875e276c9648f5b7b1
+Dex:         0x7989e0614175b7f3ae304cd6450afd8e484eabf0
+Perpetuals:  0xfb70296f034ce4bb44abd4d20e78dbf85cdebf5d
+Delta Vault: 0xb67aacd7ff69916123254e4aa1cca0cf167c8ea7
 ```
 
 Adjust / or \ according to windows or macos
