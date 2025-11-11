@@ -1,3 +1,7 @@
+on deployment you are required to have 3 ETH with your deploy wallet, on testing please use txn size of 1,000 USDC due to limited eth in DEX as it is pulling live price for every 10k deposit it requires 1.5 ETH liquidity to swap into ETH.
+
+if you require USDC please contact either Jun Wei or Ashley
+
 Deployment:
 https://aavethena.vercel.app/
 
